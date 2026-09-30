@@ -17,9 +17,14 @@ Unterstützt: **Pokémon, Yu-Gi-Oh!, Fußball- und Basketball-Karten** (ungegrad
    **✅ Auf eBay einstellen · 💶 Preis ändern · 📝 Titel ändern · 📦 Zustand ändern · 🗑 Verwerfen**
 5. Nach ✅ lädt der Bot die Fotos zu eBay hoch und stellt die Karte ein. Du bekommst den Link.
 
-Befehle im Chat: `/offen` (wartet auf Bestätigung), `/online` (schon auf eBay), `/hilfe`.
+Befehle im Chat: `/offen` (wartet auf Bestätigung), `/online` (schon auf eBay), `/ebay` (eBay verbinden), `/hilfe`.
 
-## Einrichtung (einmalig, ca. 30–45 Minuten)
+## Einrichtung nur mit dem Handy
+
+👉 **[ANLEITUNG_HANDY.md](ANLEITUNG_HANDY.md)**: Schritt für Schritt, ohne PC.
+Der Bot läuft dabei auf einem Online-Server (Railway), und eBay verbindest du im Chat mit `/ebay`.
+
+## Einrichtung am PC (einmalig, ca. 30–45 Minuten)
 
 Du brauchst einen Computer mit **Python 3.10 oder neuer**. Später kann der Bot auch auf
 einem kleinen Server laufen, dann muss dein PC nicht an sein (siehe unten).

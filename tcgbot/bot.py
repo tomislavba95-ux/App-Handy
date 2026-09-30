@@ -3,6 +3,7 @@
 import asyncio
 import html
 import logging
+import urllib.parse
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ParseMode
@@ -50,6 +51,7 @@ HELP_TEXT = (
     "Befehle:\n"
     "/offen – Karten, die noch auf deine Bestätigung warten\n"
     "/online – Karten, die schon auf eBay sind\n"
+    "/ebay – eBay-Konto verbinden\n"
     "/hilfe – diese Hilfe"
 )
 
@@ -179,7 +181,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     text = "👋 Hallo! Ich helfe dir, deine Sammelkarten auf eBay zu verkaufen.\n\n" + HELP_TEXT
     if not config.ebay_can_sell:
-        text += "\n\n⚠️ eBay ist noch nicht verbunden – ich kann Karten erkennen und Preise schätzen, aber noch nicht einstellen."
+        text += (
+            "\n\n⚠️ eBay ist noch nicht verbunden – ich kann Karten erkennen und Preise schätzen, "
+            "aber noch nicht einstellen. Verbinden mit /ebay"
+        )
     elif config.is_sandbox:
         text += "\n\n🧪 Testmodus (eBay-Sandbox): Angebote sind nicht echt."
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -361,6 +366,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Schick mir einfach ein Foto einer Karte. /hilfe zeigt alle Befehle.")
         return
     action, draft_id = awaiting
+    if action.startswith("ebay_"):
+        await ebay_setup_step(update, context, action)
+        return
     storage: Storage = context.bot_data["storage"]
     draft = storage.get(draft_id)
     if not draft or draft["status"] != "offen":
@@ -394,7 +402,7 @@ async def publish(message: Message, draft: dict, context: ContextTypes.DEFAULT_T
     ebay: EbayClient | None = context.bot_data["ebay"]
     draft_id = draft["id"]
     if not config.ebay_can_sell or not ebay:
-        await message.reply_text("eBay ist noch nicht verbunden. Siehe Anleitung in der README (Schritt 3).")
+        await message.reply_text("eBay ist noch nicht verbunden. Tippe /ebay, um es zu verbinden.")
         return
     if not draft.get("price"):
         await message.reply_text("Bitte zuerst einen Preis festlegen (💶 Preis ändern).")
@@ -447,10 +455,83 @@ async def publish(message: Message, draft: dict, context: ContextTypes.DEFAULT_T
     )
 
 
+# ---------- eBay-Anmeldung im Chat ----------
+
+
+async def cmd_ebay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _allowed(update):
+        return
+    ebay: EbayClient | None = context.bot_data["ebay"]
+    if not ebay or not config.ebay_ru_name:
+        await update.message.reply_text(
+            "Es fehlen noch EBAY_CLIENT_ID, EBAY_CLIENT_SECRET und EBAY_RU_NAME in den Einstellungen "
+            "(siehe Anleitung, Schritt 4)."
+        )
+        return
+    mode = "🧪 Testmodus (Sandbox)" if config.is_sandbox else "🟢 Echter Modus (eBay.de)"
+    context.user_data["awaiting"] = ("ebay_code", 0)
+    await update.message.reply_text(
+        f"{mode}\n\n"
+        "1. Tippe auf den Link und melde dich bei eBay an.\n"
+        "2. Tippe auf „Zustimmen“.\n"
+        "3. Du landest auf einer eBay-Seite. Tippe oben in die Adresszeile, kopiere die ganze "
+        "Adresse und schick sie mir hier.\n\n"
+        f"{ebay.consent_url()}",
+        disable_web_page_preview=True,
+    )
+
+
+async def ebay_setup_step(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
+    ebay: EbayClient = context.bot_data["ebay"]
+    storage: Storage = context.bot_data["storage"]
+    text = update.message.text.strip()
+
+    if action == "ebay_code":
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(text).query).get("code", [text])[0]
+        try:
+            tokens = await ebay.exchange_code(code)
+        except EbayError as e:
+            await update.message.reply_text(f"❌ Das hat nicht geklappt: {e}\nStarte mit /ebay neu.")
+            return
+        config.ebay_refresh_token = tokens["refresh_token"]
+        storage.set_setting("ebay_refresh_token", tokens["refresh_token"])
+        await ebay.opt_in_business_policies()
+        context.user_data["awaiting"] = ("ebay_location", 0)
+        await update.message.reply_text(
+            "✅ eBay ist verbunden!\n\nVon wo verschickst du die Karten? "
+            "Schick mir Postleitzahl und Ort, z. B.: 10115 Berlin"
+        )
+        return
+
+    # action == "ebay_location"
+    parts = text.split(maxsplit=1)
+    if len(parts) != 2 or not parts[0].isdigit():
+        context.user_data["awaiting"] = ("ebay_location", 0)
+        await update.message.reply_text("Bitte so schicken: Postleitzahl Ort, z. B. 10115 Berlin")
+        return
+    try:
+        await ebay.ensure_location(parts[0], parts[1])
+    except EbayError as e:
+        await update.message.reply_text(f"❌ Versandort konnte nicht gespeichert werden: {e}")
+        return
+    try:
+        await ebay.policies()
+    except EbayError as e:
+        await update.message.reply_text(
+            f"✅ Versandort gespeichert.\n\n⚠️ {e}\n\nDanach einfach eine Karte schicken – "
+            "/ebay musst du nicht nochmal machen."
+        )
+        return
+    await update.message.reply_text("🎉 Alles eingerichtet! Schick mir jetzt Fotos deiner ersten Karte.")
+
+
 # ---------- Start ----------
 
 
 async def _post_init(app: Application) -> None:
+    storage = Storage()
+    if not config.ebay_refresh_token:
+        config.ebay_refresh_token = storage.get_setting("ebay_refresh_token") or ""
     ebay = EbayClient(config) if config.ebay_configured else None
     recognizer = CardRecognizer(config)
     if ebay:
@@ -465,7 +546,7 @@ async def _post_init(app: Application) -> None:
         ebay=ebay,
         recognizer=recognizer,
         pricer=PriceFinder(config, ebay),
-        storage=Storage(),
+        storage=storage,
         semaphore=asyncio.Semaphore(MAX_PARALLEL_RECOGNITIONS),
     )
 
@@ -493,6 +574,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("offen", cmd_open))
     app.add_handler(CommandHandler("online", cmd_online))
+    app.add_handler(CommandHandler("ebay", cmd_ebay))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))

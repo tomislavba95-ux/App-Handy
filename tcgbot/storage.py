@@ -10,6 +10,7 @@ from .config import DATA_DIR
 
 class Storage:
     def __init__(self, data_dir: Path = DATA_DIR):
+        data_dir.mkdir(parents=True, exist_ok=True)
         self.photo_dir = data_dir / "photos"
         self.photo_dir.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(data_dir / "karten.db")
@@ -23,6 +24,15 @@ class Storage:
                 created REAL NOT NULL
             )"""
         )
+        self.db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        self.db.commit()
+
+    def get_setting(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         self.db.commit()
 
     def create(self, chat_id: int, data: dict, photos: list[bytes]) -> int:

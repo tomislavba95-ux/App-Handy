@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
 
 
 def _load_dotenv(path: Path) -> None:
@@ -22,6 +21,9 @@ def _load_dotenv(path: Path) -> None:
 
 
 _load_dotenv(BASE_DIR / ".env")
+
+# Speicherort für Fotos und Entwürfe (auf einem Server auf ein dauerhaftes Volume zeigen lassen)
+DATA_DIR = Path(os.environ.get("DATA_DIR") or BASE_DIR / "data")
 
 
 def _get(name: str, default: str = "") -> str:
